@@ -56,7 +56,9 @@ class Options:
     theme: str = "light"
     dpi: int = 150
     width: float = 12.0
-    gap: float = 2.0          # seconds without movement that end a stroke
+    split: str = "click"      # path: what ends a stroke: "click", "rest" or "both"
+    gap: float = 2.0          # seconds without movement that end a stroke (rest, both)
+    double_click: float = 0.3 # presses closer than this count as one boundary (click, both)
     stride: int = 1           # keep every Nth sample
     color: str = "ink"        # path: "ink" or "time"
     clicks: bool = True
@@ -136,6 +138,18 @@ def _screen_axes(ax, th, rects, x0, y0, x1, y1) -> None:
         s.set_visible(False)
 
 
+def _stroke_breaks(m, o: Options, press_t: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """(break indices, share flags). Session breaks never share a point: the motion in between is unknown."""
+    soft = []
+    if o.split in ("rest", "both"):
+        soft.append(m.rest_breaks(int(o.gap * NS)))
+    if o.split in ("click", "both"):
+        soft.append(m.click_breaks(query.merge_presses(press_t, int(o.double_click * NS))))
+    hard = m.session_breaks()
+    brk = np.unique(np.concatenate(soft + [hard])).astype(np.int64)
+    return brk, ~np.isin(brk, hard)
+
+
 def _save(fig, o: Options, **kw) -> None:
     """Write to a temp name and rename, so a viewer never sees a half-written file."""
     tmp = o.out.with_name(o.out.stem + ".tmp" + o.out.suffix)
@@ -155,9 +169,9 @@ def render_path(conn, o: Options) -> str:
     rects = query.monitor_rects(conn, o.rng)
     x0, y0, x1, y1 = query.bounds(rects, m.x, m.y)
     w, h = x1 - x0, y1 - y0
-    gap_ns = int(o.gap * NS)
-    brk = m.breaks(gap_ns)
-    travelled = float(m.step_lengths(gap_ns).sum())
+    ct, code = query.load_presses(conn, o.rng)
+    brk, share = _stroke_breaks(m, o, ct)
+    travelled = float(m.step_lengths(int(o.gap * NS)).sum())
 
     if o.art:
         fig = plt.figure(figsize=(o.width, o.width * h / w))
@@ -175,7 +189,7 @@ def render_path(conn, o: Options) -> str:
         pts = np.column_stack([m.x, m.y])
         segs = np.stack([pts[:-1], pts[1:]], axis=1)
         keep = np.ones(len(segs), dtype=bool)
-        keep[brk - 1] = False  # segments that would bridge an idle gap
+        keep[brk[~share] - 1] = False  # never draw across a logger restart
         frac = (m.t - m.t[0]) / max(int(m.t[-1] - m.t[0]), 1)
         ax.add_collection(LineCollection(
             segs[keep], colors=cmap(frac[:-1][keep]), linewidths=o.line_width,
@@ -189,31 +203,27 @@ def render_path(conn, o: Options) -> str:
             cb.outline.set_visible(False)
             cb.ax.tick_params(size=0, labelsize=7, colors=th["muted"])
     else:
-        xs = np.insert(m.x, brk, np.nan)
-        ys = np.insert(m.y, brk, np.nan)
+        xs, ys = m.stroke_arrays(brk, share)
         ax.plot(xs, ys, color=th["ink"] if o.art else th["ink2"], lw=o.line_width,
                 solid_joinstyle="round", solid_capstyle="round")
 
-    n_clicks = 0
-    if o.clicks:
-        ct, code = query.load_presses(conn, o.rng)
-        n_clicks = len(ct)
-        if n_clicks:
-            # the cursor position at click time is the last sample before it
-            idx = np.clip(np.searchsorted(m.t, ct, side="right") - 1, 0, len(m) - 1)
-            cx, cy = m.x[idx], m.y[idx]
-            names = np.array([BUTTON_NAMES.get(int(c), "other") for c in code])
-            plain = o.art or o.color == "time"  # shapes only, no hue competing with the strokes
-            for label, slot, marker in CLICK_STYLES:
-                sel = names == label
-                if not sel.any():
-                    continue
-                if plain:
-                    color = th["ink"]
-                else:
-                    color = th["series"][slot] if slot is not None else th["muted"]
-                ax.scatter(cx[sel], cy[sel], s=18, marker=marker, color=color, edgecolors=th["surface"],
-                           linewidths=0.7, zorder=3, label=f"{label} ({int(sel.sum()):,})")
+    n_clicks = len(ct)
+    if o.clicks and n_clicks:
+        # the cursor position at click time is the last sample before it
+        idx = np.clip(np.searchsorted(m.t, ct, side="right") - 1, 0, len(m) - 1)
+        cx, cy = m.x[idx], m.y[idx]
+        names = np.array([BUTTON_NAMES.get(int(c), "other") for c in code])
+        plain = o.art or o.color == "time"  # shapes only, no hue competing with the strokes
+        for label, slot, marker in CLICK_STYLES:
+            sel = names == label
+            if not sel.any():
+                continue
+            if plain:
+                color = th["ink"]
+            else:
+                color = th["series"][slot] if slot is not None else th["muted"]
+            ax.scatter(cx[sel], cy[sel], s=18, marker=marker, color=color, edgecolors=th["surface"],
+                       linewidths=0.7, zorder=3, label=f"{label} ({int(sel.sum()):,})")
 
     if o.art:
         ax.set_xlim(x0, x1)
@@ -230,7 +240,8 @@ def render_path(conn, o: Options) -> str:
                       borderaxespad=0.2)
         _save(fig, o)
     plt.close(fig)
-    return f"{o.out}: path, {len(m):,} samples, {n_clicks:,} clicks, {_span(int(m.t[0]), int(m.t[-1]))}"
+    return (f"{o.out}: path, {len(m):,} samples, {len(brk) + 1:,} strokes (split by {o.split}), "
+            f"{n_clicks:,} clicks, {_span(int(m.t[0]), int(m.t[-1]))}")
 
 
 # ------------------------------------------------------------------------ heatmap

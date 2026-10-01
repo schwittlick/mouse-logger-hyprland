@@ -110,8 +110,11 @@ uv run mouse-logger viz activity --since yesterday --until today
 uv run mouse-logger viz path --watch 5            # re-render every 5 s; open the png in a viewer that reloads
 ```
 
-- `path`: strokes split where the cursor rested longer than `--gap` seconds
-  (default 2); clicks as markers that differ in colour and shape. Options:
+- `path`: one stroke per stretch between two button presses (`--split click`,
+  the default; presses within `--double-click` 0.3 s count as one, scroll does
+  not count). `--split rest` cuts instead where the cursor rested longer than
+  `--gap` seconds, `--split both` does either. A logger restart always starts
+  a new stroke. Clicks are markers that differ in colour and shape. Options:
   `--no-clicks`, `--line-width`, `--stride N` for long ranges.
 - `heatmap`: samples per `--cell` logical px (default 8), log scale.
 - `activity`: distance and active minutes per hour, clicks per focused app.

@@ -37,7 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     common.add_argument("--dark", action="store_true", help="dark surface")
     common.add_argument("--dpi", type=int, default=150)
     common.add_argument("--width", type=float, default=12.0, help="figure width in inches (default 12)")
-    common.add_argument("--gap", type=float, default=2.0, help="seconds without movement that end a stroke (default 2)")
+    common.add_argument("--gap", type=float, default=2.0,
+                        help="seconds without movement that end a stroke with --split rest/both (default 2)")
     common.add_argument("--stride", type=int, default=1, help="use every Nth sample, for long ranges")
     common.add_argument("--watch", type=float, metavar="SECONDS", default=None,
                         help="re-render every N seconds until Ctrl-C")
@@ -47,7 +48,11 @@ def main(argv: list[str] | None = None) -> int:
     vp = vs.add_parser("path", parents=[common], help="the trajectory as strokes, clicks as markers")
     vp.add_argument("--color", choices=["ink", "time"], default="ink",
                     help="one colour, or a light-to-dark ramp from the start to the end of the range")
-    vp.add_argument("--no-clicks", action="store_true", help="strokes only")
+    vp.add_argument("--split", choices=["click", "rest", "both"], default="click",
+                    help="what ends a stroke: a button press (default), a rest longer than --gap, or either")
+    vp.add_argument("--double-click", type=float, default=0.3, metavar="SECONDS",
+                    help="presses closer together than this count as one boundary (default 0.3)")
+    vp.add_argument("--no-clicks", action="store_true", help="no click markers")
     vp.add_argument("--art", action="store_true", help="no title, frame or legend: just the drawing (good with .svg)")
     vp.add_argument("--line-width", type=float, default=0.5, help="stroke width in points (default 0.5)")
     vh = vs.add_parser("heatmap", parents=[common], help="where the cursor spends its time")
@@ -89,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         o = Options(
             db=a.db or default_db_path(), rng=rng, out=a.out or Path(f"mouse_{a.view}.png"),
             theme="dark" if a.dark else "light", dpi=a.dpi, width=a.width, gap=a.gap, stride=a.stride,
+            split=getattr(a, "split", "click"), double_click=getattr(a, "double_click", 0.3),
             color=getattr(a, "color", "ink"), clicks=not getattr(a, "no_clicks", False),
             art=getattr(a, "art", False), line_width=getattr(a, "line_width", 0.5),
             cell=getattr(a, "cell", 8.0), top=getattr(a, "top", 10),

@@ -110,12 +110,43 @@ class Motion:
     def __len__(self) -> int:
         return len(self.t)
 
-    def breaks(self, gap_ns: int) -> np.ndarray:
-        """Indices i where a new stroke starts (idle gap or new session before i)."""
+    # Stroke boundaries are sample indices i meaning "a new stroke starts at i".
+
+    def session_breaks(self) -> np.ndarray:
+        """The logger restarted before sample i: nothing is known about motion in between."""
         if len(self.t) < 2:
             return np.array([], dtype=np.int64)
-        cut = (np.diff(self.t) > gap_ns) | (np.diff(self.sid) != 0)
-        return np.flatnonzero(cut) + 1
+        return np.flatnonzero(np.diff(self.sid) != 0) + 1
+
+    def rest_breaks(self, gap_ns: int) -> np.ndarray:
+        """The cursor rested longer than gap_ns before sample i."""
+        if len(self.t) < 2:
+            return np.array([], dtype=np.int64)
+        return np.flatnonzero(np.diff(self.t) > gap_ns) + 1
+
+    def click_breaks(self, click_t: np.ndarray) -> np.ndarray:
+        """Sample i is the first one after a click."""
+        idx = np.searchsorted(self.t, click_t, side="right")
+        return np.unique(idx[(idx > 0) & (idx < len(self.t))])
+
+    def stroke_arrays(self, brk: np.ndarray, share: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """x and y with NaN between strokes, for one plot call.
+
+        Where share[k] is true the stroke after break brk[k] starts at the last
+        point of the previous one (the cursor really moved on from there), so
+        the two strokes meet at the click or rest position.
+        """
+        xs, ys, prev = [], [], 0
+        for i, sh in zip(brk, share):
+            xs += [self.x[prev:i], [np.nan]]
+            ys += [self.y[prev:i], [np.nan]]
+            if sh:
+                xs.append(self.x[i - 1:i])
+                ys.append(self.y[i - 1:i])
+            prev = int(i)
+        xs.append(self.x[prev:])
+        ys.append(self.y[prev:])
+        return np.concatenate(xs), np.concatenate(ys)
 
     def step_lengths(self, gap_ns: int) -> np.ndarray:
         """Distance from sample i to i+1, zero across idle gaps and session changes."""
@@ -133,6 +164,15 @@ def load_motion(conn: sqlite3.Connection, rng: Range, stride: int = 1) -> Motion
     if stride > 1:
         a = a[::stride]
     return Motion(a[:, 0], a[:, 1].astype(float), a[:, 2].astype(float), a[:, 3])
+
+
+def merge_presses(t: np.ndarray, within_ns: int) -> np.ndarray:
+    """Drop presses that follow another press within within_ns (double and triple clicks)."""
+    if len(t) == 0:
+        return t
+    keep = np.ones(len(t), dtype=bool)
+    keep[1:] = np.diff(t) > within_ns
+    return t[keep]
 
 
 def load_presses(conn: sqlite3.Connection, rng: Range) -> tuple[np.ndarray, np.ndarray]:
