@@ -1,0 +1,23 @@
+[project]
+name = "mouse-logger"
+version = "0.1.0"
+description = "Passive mouse/cursor movement recorder for Hyprland (Wayland)"
+authors = [
+    { name = "Marcel Schwittlick", email = "info@schwittlick.net" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "evdev>=2.0.0",
+]
+
+[project.scripts]
+mouse-logger = "mouse_logger.cli:main"
+
+[project.optional-dependencies]
+viz = [
+    "matplotlib>=3.9",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"
