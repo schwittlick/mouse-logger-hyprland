@@ -7,6 +7,7 @@ from pathlib import Path
 
 from . import __version__
 from .db import default_db_path
+from .dayfiles import default_archive_path, default_data_dir
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,15 +24,28 @@ def main(argv: list[str] | None = None) -> int:
     i = sub.add_parser("install-service", help="install and start the systemd user service")
     i.add_argument("--db", type=Path, default=None)
     i.add_argument("--hz", type=int, default=250)
+    i.add_argument("--data-dir", type=Path, default=None, help=f"where the daily export writes (default {default_data_dir()})")
 
     sub.add_parser("uninstall-service", help="stop, disable and remove the systemd user service")
 
+    e = sub.add_parser("export", help="write completed days as per-machine day files for syncing")
+    e.add_argument("--db", type=Path, default=None, help="live sqlite file (default as for run)")
+    e.add_argument("--dir", type=Path, default=None, help=f"data directory (default {default_data_dir()}, or $MOUSE_LOGGER_DATA)")
+    e.add_argument("--today", action="store_true", help="also write today's partial day (replaced on each run)")
+    e.add_argument("--force", action="store_true", help="rewrite day files that already exist")
+
+    im = sub.add_parser("import", help="merge all machines' day files into one archive database")
+    im.add_argument("--dir", type=Path, default=None, help=f"data directory (default {default_data_dir()})")
+    im.add_argument("--db", type=Path, default=None, help=f"archive sqlite file (default {default_archive_path()})")
+
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--db", type=Path, default=None, help="sqlite file (default as for run)")
+    common.add_argument("--db", type=Path, default=None, help="sqlite file (default: the live database)")
+    common.add_argument("--archive", action="store_true", help=f"read the merged archive {default_archive_path()} instead")
     common.add_argument("--since", default="today",
                         help="start: all, today, yesterday, 30m, 2h, 7d, 2026-09-30 or 2026-09-30 14:00 (default today)")
     common.add_argument("--until", default=None, help="end, same forms (default now)")
     common.add_argument("--session", type=int, default=None, help="only this session id")
+    common.add_argument("--machine", default=None, metavar="HOSTNAME", help="only sessions recorded on this machine")
     common.add_argument("--out", type=Path, default=None,
                         help="output image; the extension picks png, svg or pdf (default mouse_<view>.png)")
     common.add_argument("--dark", action="store_true", help="dark surface")
@@ -76,7 +90,32 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "install-service":
         from .service import install
 
-        install(a.hz, a.db)
+        install(a.hz, a.db, a.data_dir)
+        return 0
+    if a.cmd == "export":
+        from .dayfiles import export_days
+
+        try:
+            written = export_days(a.db or default_db_path(), a.dir or default_data_dir(), a.today, a.force)
+        except FileNotFoundError as e:
+            print(e, file=sys.stderr)
+            return 1
+        for path, n in written:
+            print(f"wrote {path} ({n:,} rows)")
+        if not written:
+            print("nothing new to export")
+        return 0
+    if a.cmd == "import":
+        from .dayfiles import import_days
+
+        try:
+            imported, skipped = import_days(a.dir or default_data_dir(), a.db or default_archive_path())
+        except FileNotFoundError as e:
+            print(e, file=sys.stderr)
+            return 1
+        for path, n in imported:
+            print(f"imported {path} ({n:,} rows)")
+        print(f"{len(imported)} file(s) imported, {skipped} already up to date, archive: {a.db or default_archive_path()}")
         return 0
     if a.cmd == "uninstall-service":
         from .service import uninstall
@@ -88,11 +127,11 @@ def main(argv: list[str] | None = None) -> int:
         from .viz import Options, run as run_viz
 
         try:
-            rng = Range.from_args(a.since, a.until, a.session)
+            rng = Range.from_args(a.since, a.until, a.session, a.machine)
         except ValueError as e:
             p.error(str(e))
         o = Options(
-            db=a.db or default_db_path(), rng=rng, out=a.out or Path(f"mouse_{a.view}.png"),
+            db=a.db or (default_archive_path() if a.archive else default_db_path()), rng=rng, out=a.out or Path(f"mouse_{a.view}.png"),
             theme="dark" if a.dark else "light", dpi=a.dpi, width=a.width, gap=a.gap, stride=a.stride,
             split=getattr(a, "split", "click"), double_click=getattr(a, "double_click", 0.3),
             color=getattr(a, "color", "ink"), clicks=not getattr(a, "no_clicks", False),

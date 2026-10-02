@@ -8,11 +8,17 @@ import sys
 from pathlib import Path
 
 UNIT_NAME = "mouse-logger.service"
+EXPORT_SERVICE = "mouse-logger-export.service"
+EXPORT_TIMER = "mouse-logger-export.timer"
+
+
+def unit_dir() -> Path:
+    cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return Path(cfg) / "systemd" / "user"
 
 
 def unit_path() -> Path:
-    cfg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    return Path(cfg) / "systemd" / "user" / UNIT_NAME
+    return unit_dir() / UNIT_NAME
 
 
 def executable() -> str:
@@ -43,27 +49,61 @@ WantedBy=graphical-session.target
 """
 
 
+def render_export_units(exec_path: str, data_dir: Path | None, db: Path | None) -> tuple[str, str]:
+    args = "export"
+    if data_dir is not None:
+        args += f" --dir {data_dir}"
+    if db is not None:
+        args += f" --db {db}"
+    service = f"""[Unit]
+Description=Export completed days of mouse recordings as day files
+
+[Service]
+Type=oneshot
+ExecStart={exec_path} {args}
+Nice=10
+"""
+    timer = f"""[Unit]
+Description=Daily export of mouse recordings
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
+"""
+    return service, timer
+
+
 def _systemctl(*args: str) -> None:
     subprocess.run(["systemctl", "--user", *args], check=True)
 
 
-def install(hz: int, db: Path | None) -> None:
-    path = unit_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+def install(hz: int, db: Path | None, data_dir: Path | None) -> None:
+    d = unit_dir()
+    d.mkdir(parents=True, exist_ok=True)
     exe = executable()
-    path.write_text(render_unit(exe, hz, db))
+    unit_path().write_text(render_unit(exe, hz, db))
+    service, timer = render_export_units(exe, data_dir, db)
+    (d / EXPORT_SERVICE).write_text(service)
+    (d / EXPORT_TIMER).write_text(timer)
     _systemctl("daemon-reload")
     _systemctl("enable", "--now", UNIT_NAME)
-    print(f"installed {path}")
+    _systemctl("enable", "--now", EXPORT_TIMER)
+    print(f"installed {unit_path()} (recorder) and {d / EXPORT_TIMER} (daily export)")
     print(f"ExecStart: {exe}")
     print(f"status:  systemctl --user status {UNIT_NAME}")
     print(f"logs:    journalctl --user -u {UNIT_NAME} -f")
+    print(f"timer:   systemctl --user list-timers {EXPORT_TIMER}")
 
 
 def uninstall() -> None:
-    path = unit_path()
-    subprocess.run(["systemctl", "--user", "disable", "--now", UNIT_NAME], check=False)
-    if path.exists():
-        path.unlink()
-        print(f"removed {path}")
+    subprocess.run(["systemctl", "--user", "disable", "--now", UNIT_NAME, EXPORT_TIMER], check=False)
+    for name in (UNIT_NAME, EXPORT_SERVICE, EXPORT_TIMER):
+        path = unit_dir() / name
+        if path.exists():
+            path.unlink()
+            print(f"removed {path}")
     _systemctl("daemon-reload")

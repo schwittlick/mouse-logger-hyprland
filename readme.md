@@ -25,7 +25,7 @@ git clone <your remote> ~/dev/mouse_logger     # or copy the folder
 cd ~/dev/mouse_logger
 uv sync                                        # core recorder
 uv sync --extra viz                            # optional: matplotlib for rendering
-uv run mouse-logger install-service            # writes the user unit, enables and starts it
+uv run mouse-logger install-service            # recorder service plus the daily export timer
 journalctl --user -u mouse-logger -n 20        # expect "session N started" and one "reading /dev/input/..." per mouse
 ```
 
@@ -50,6 +50,27 @@ uv run mouse-logger uninstall-service
 The unit points at the venv inside this folder. If you move the folder, run
 `install-service` again. Each machine keeps its own database; the hostname is
 stored per session, so recordings can be told apart later.
+
+## Other machines
+
+The live database stays local; recordings travel as one file per machine and
+day. Completed days never change, so any sync tool handles them well.
+
+```sh
+uv run mouse-logger export            # completed days -> ~/mouse-data/<hostname>/<YYYY-MM-DD>.sqlite
+uv run mouse-logger export --today    # also today's partial day, replaced on every run
+uv run mouse-logger import            # all machines' day files -> ~/.local/share/mouse_logger/archive.db
+uv run mouse-logger viz path --archive --since all             # explore the merged archive
+uv run mouse-logger viz path --archive --since all --machine lush
+```
+
+`install-service` also installs a timer that runs `export` once a day, so
+`~/mouse-data` fills up on its own. Sync that directory between machines with
+Syncthing, rsync or similar (`--dir` or `MOUSE_LOGGER_DATA` changes the
+location; pass `--data-dir` to `install-service` for the timer). Run `import`
+wherever you want to explore: it skips files it has already merged, replaces a
+partial day when the complete file arrives, and keeps every machine's sessions
+apart by hostname. Never sync the live database itself.
 
 ## What it records
 
@@ -131,7 +152,8 @@ from the monitor layout stored with the session.
 - `src/mouse_logger/inputdev.py`: evdev discovery, hotplug rescan, readers.
 - `src/mouse_logger/db.py`: schema and the batching writer thread.
 - `src/mouse_logger/recorder.py`: poller, focus tracker, wiring, signals.
-- `src/mouse_logger/service.py`: systemd unit install and uninstall.
+- `src/mouse_logger/service.py`: systemd units (recorder, export timer).
+- `src/mouse_logger/dayfiles.py`: per-day export files and the archive import.
 - `src/mouse_logger/query.py`: time-range parsing, loading into numpy.
 - `src/mouse_logger/viz.py`: the three renderers.
 - `src/mouse_logger/cli.py`: the `mouse-logger` entry point.

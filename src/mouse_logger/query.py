@@ -70,10 +70,12 @@ class Range:
     since_ns: int | None = None
     until_ns: int | None = None
     session: int | None = None
+    machine: str | None = None  # sessions.hostname, useful on a merged archive
 
     @classmethod
-    def from_args(cls, since: str | None, until: str | None, session: int | None) -> "Range":
-        return cls(parse_when(since), parse_when(until, end=True), session)
+    def from_args(cls, since: str | None, until: str | None, session: int | None,
+                  machine: str | None = None) -> "Range":
+        return cls(parse_when(since), parse_when(until, end=True), session, machine)
 
     def sql(self) -> tuple[str, list]:
         conds, args = [], []
@@ -86,6 +88,9 @@ class Range:
         if self.session is not None:
             conds.append("session_id = ?")
             args.append(self.session)
+        if self.machine is not None:
+            conds.append("session_id IN (SELECT id FROM sessions WHERE hostname = ?)")
+            args.append(self.machine)
         return (" WHERE " + " AND ".join(conds)) if conds else "", args
 
 
@@ -214,6 +219,9 @@ def monitor_rects(conn: sqlite3.Connection, rng: Range) -> list[tuple[float, flo
     if rng.until_ns is not None:
         conds.append("started_ns < ?")
         args.append(rng.until_ns)
+    if rng.machine is not None:
+        conds.append("hostname = ?")
+        args.append(rng.machine)
     where = (" WHERE " + " AND ".join(conds)) if conds else ""
     row = conn.execute(f"SELECT monitors FROM sessions{where} ORDER BY started_ns DESC LIMIT 1", args).fetchone()
     if not row or not row[0]:
