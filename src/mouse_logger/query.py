@@ -210,6 +210,30 @@ def app_at(focus_t: np.ndarray, focus_app: list[str | None], t: np.ndarray) -> l
     return [(focus_app[i] or "(none)") if i >= 0 else "(none)" for i in idx]
 
 
+def rects_from_json(text: str | None) -> list[tuple[float, float, float, float]]:
+    """Logical (x, y, w, h) of each monitor in a `hyprctl -j monitors` document."""
+    if not text:
+        return []
+    rects = []
+    for m in json.loads(text):
+        scale = float(m.get("scale") or 1.0)
+        w, h = m["width"] / scale, m["height"] / scale
+        if int(m.get("transform", 0)) % 2 == 1:  # 90/270 degree rotations
+            w, h = h, w
+        rects.append((float(m["x"]), float(m["y"]), w, h))
+    return rects
+
+
+def reference_rect(rects) -> tuple[float, float, float, float] | None:
+    """The monitor to normalise coordinates by: the one containing logical (0, 0), else the largest."""
+    if not rects:
+        return None
+    for r in rects:
+        if r[0] <= 0 < r[0] + r[2] and r[1] <= 0 < r[1] + r[3]:
+            return r
+    return max(rects, key=lambda r: r[2] * r[3])
+
+
 def monitor_rects(conn: sqlite3.Connection, rng: Range) -> list[tuple[float, float, float, float]]:
     """Logical (x, y, w, h) of each monitor from the newest session in range."""
     conds, args = [], []
@@ -224,16 +248,7 @@ def monitor_rects(conn: sqlite3.Connection, rng: Range) -> list[tuple[float, flo
         args.append(rng.machine)
     where = (" WHERE " + " AND ".join(conds)) if conds else ""
     row = conn.execute(f"SELECT monitors FROM sessions{where} ORDER BY started_ns DESC LIMIT 1", args).fetchone()
-    if not row or not row[0]:
-        return []
-    rects = []
-    for m in json.loads(row[0]):
-        scale = float(m.get("scale") or 1.0)
-        w, h = m["width"] / scale, m["height"] / scale
-        if int(m.get("transform", 0)) % 2 == 1:  # 90/270 degree rotations
-            w, h = h, w
-        rects.append((float(m["x"]), float(m["y"]), w, h))
-    return rects
+    return rects_from_json(row[0]) if row else []
 
 
 def bounds(rects, x: np.ndarray, y: np.ndarray) -> tuple[float, float, float, float]:

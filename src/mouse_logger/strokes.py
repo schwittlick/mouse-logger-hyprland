@@ -58,16 +58,18 @@ class StrokeSet:
         return out
 
 
-def load_strokes(conn, rng: query.Range, double_click: float = 0.3,
-                 min_points: int = 4, min_length: float = 0.0) -> StrokeSet:
-    """Click-to-click strokes, as in `viz path`: a stroke ends at a button press
-    (presses within double_click seconds count as one) or at a logger restart.
-    Strokes with fewer than min_points samples or shorter than min_length px are dropped.
+def segment(m: query.Motion, press_t: np.ndarray, double_click: float = 0.3,
+            min_points: int = 4, min_length: float = 0.0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(start, stop, length) of the click-to-click strokes in the motion m.
+
+    A stroke ends at a button press (presses within double_click seconds count
+    as one) or at a logger restart. After a click the next stroke starts at the
+    click position, so neighbours share that sample. Strokes with fewer than
+    min_points samples or shorter than min_length px are dropped.
     """
-    m = query.load_motion(conn, rng)
     if len(m) < 2:
-        raise NoData("no cursor movement in this range")
-    press_t, _ = query.load_presses(conn, rng)
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty, np.zeros(0)
     hard = m.session_breaks()
     soft = m.click_breaks(query.merge_presses(press_t, int(double_click * NS)))
     brk = np.unique(np.concatenate([soft, hard])).astype(np.int64)
@@ -78,10 +80,19 @@ def load_strokes(conn, rng: query.Range, double_click: float = 0.3,
     cum = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(m.x), np.diff(m.y)))])
     length = cum[stop - 1] - cum[start]
     keep = (stop - start >= max(min_points, 2)) & (length >= min_length) & (length > 0)
-    start, stop, length = start[keep], stop[keep], length[keep]
+    return start[keep], stop[keep], length[keep]
+
+
+def load_strokes(conn, rng: query.Range, double_click: float = 0.3,
+                 min_points: int = 4, min_length: float = 0.0) -> StrokeSet:
+    """Click-to-click strokes of a time range, as in `viz path`; see segment()."""
+    m = query.load_motion(conn, rng)
+    if len(m) < 2:
+        raise NoData("no cursor movement in this range")
+    press_t, _ = query.load_presses(conn, rng)
+    start, stop, length = segment(m, press_t, double_click, min_points, min_length)
     if len(start) == 0:
         raise NoData("no strokes in this range")
-
     ft, fa = query.load_focus(conn, rng)
     return StrokeSet(m, start, stop, length, query.app_at(ft, fa, m.t[start]))
 
