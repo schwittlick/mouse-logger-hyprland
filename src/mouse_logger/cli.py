@@ -20,11 +20,17 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--db", type=Path, default=None, help=f"sqlite file (default {default_db_path()}, or $MOUSE_LOGGER_DB)")
     r.add_argument("--hz", type=int, default=250, help="cursor poll rate (default 250)")
     r.add_argument("--no-evdev", action="store_true", help="skip button/scroll capture from /dev/input")
+    r.add_argument("--no-live", action="store_true", help="do not publish events to the live socket")
+    r.add_argument("--live-sock", type=Path, default=None, help="unix datagram socket to publish to (default $XDG_RUNTIME_DIR/mouse_logger/live.sock)")
 
     i = sub.add_parser("install-service", help="install and start the systemd user service")
     i.add_argument("--db", type=Path, default=None)
     i.add_argument("--hz", type=int, default=250)
     i.add_argument("--data-dir", type=Path, default=None, help=f"where the daily export writes (default {default_data_dir()})")
+    i.add_argument("--no-live", action="store_true", help="recorder without the live socket")
+    i.add_argument("--fountain", action="store_true", help="also install the data fountain service (needs: uv sync --extra fountain)")
+    i.add_argument("--port", type=int, default=7777, help="fountain port (default 7777)")
+    i.add_argument("--legacy-dir", type=Path, default=None, help="fountain: legacy cursor-project recordings to serve too")
 
     sub.add_parser("uninstall-service", help="stop, disable and remove the systemd user service")
 
@@ -88,6 +94,24 @@ def main(argv: list[str] | None = None) -> int:
     sm.add_argument("--points", type=int, default=64, help="resample every stroke to this many points (default 64)")
     sm.add_argument("-n", "--count", type=int, default=12, help="strokes shown in each grid (default 12)")
 
+    fo = sub.add_parser("fountain", help="serve every recorded path over HTTP (needs: uv sync --extra fountain)")
+    fs = fo.add_subparsers(dest="action", required=True)
+    fcommon = argparse.ArgumentParser(add_help=False)
+    fcommon.add_argument("--legacy-dir", type=Path, default=None,
+                         help="directory of legacy cursor-project recordings (default $MOUSE_LOGGER_LEGACY)")
+    fcommon.add_argument("--data-dir", type=Path, default=None, help=f"day files (default {default_data_dir()})")
+    fcommon.add_argument("--cache-dir", type=Path, default=None,
+                         help="chunk cache (default ~/.local/share/mouse_logger/fountain/v1 or $MOUSE_LOGGER_FOUNTAIN_CACHE)")
+    fcommon.add_argument("--jobs", type=int, default=None, help="parallel builds (default: all cores)")
+    fb = fs.add_parser("build", parents=[fcommon], help="build or refresh the chunk cache and exit")
+    fb.add_argument("--force", action="store_true", help="rebuild chunks that are up to date")
+    fv = fs.add_parser("serve", parents=[fcommon], help="build what is stale, then serve")
+    fv.add_argument("--host", default="127.0.0.1")
+    fv.add_argument("--port", type=int, default=7777)
+    fv.add_argument("--db", type=Path, default=None, help=f"live sqlite for today (default {default_db_path()}); 'none' to skip")
+    fv.add_argument("--no-live", action="store_true", help="no live cursor stream")
+    fv.add_argument("--live-sock", type=Path, default=None, help="unix datagram socket the recorder publishes to")
+
     a = p.parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if a.verbose else logging.INFO,
@@ -100,11 +124,14 @@ def main(argv: list[str] | None = None) -> int:
 
         if a.hz < 1 or a.hz > 1000:
             p.error("--hz must be between 1 and 1000")
-        return run(a.db or default_db_path(), a.hz, use_evdev=not a.no_evdev)
+        from .live import default_live_sock
+
+        live = None if a.no_live else (a.live_sock or default_live_sock())
+        return run(a.db or default_db_path(), a.hz, use_evdev=not a.no_evdev, live_sock=live)
     if a.cmd == "install-service":
         from .service import install
 
-        install(a.hz, a.db, a.data_dir)
+        install(a.hz, a.db, a.data_dir, live=not a.no_live, fountain=a.fountain, port=a.port, legacy_dir=a.legacy_dir)
         return 0
     if a.cmd == "export":
         from .dayfiles import export_days
@@ -153,6 +180,27 @@ def main(argv: list[str] | None = None) -> int:
             cell=getattr(a, "cell", 8.0), top=getattr(a, "top", 10),
         )
         return run_viz(a.view, o, a.watch)
+    if a.cmd == "fountain":
+        import os
+
+        from .fountain import cache as fcache
+
+        legacy = a.legacy_dir or (Path(os.environ["MOUSE_LOGGER_LEGACY"]).expanduser() if os.environ.get("MOUSE_LOGGER_LEGACY") else None)
+        data_dir = a.data_dir or default_data_dir()
+        cache_dir = a.cache_dir or fcache.default_cache_dir()
+        if a.action == "build":
+            inputs = fcache.find_inputs(legacy, data_dir, cache_dir)
+            built, failed, current = fcache.build(inputs, cache_dir, a.jobs, a.force, log=print)
+            print(f"{len(built)} built, {len(failed)} failed, {len(current)} up to date, {len(inputs)} inputs, cache: {cache_dir}")
+            return 1 if failed else 0
+        from .live import default_live_sock
+        from .fountain.serve import Options as FountainOptions, serve as run_fountain
+
+        db = None if str(a.db).lower() == "none" else (a.db or default_db_path())
+        return run_fountain(FountainOptions(
+            host=a.host, port=a.port, legacy_dir=legacy, data_dir=data_dir, db=db, cache_dir=cache_dir,
+            live=not a.no_live, live_sock=a.live_sock or default_live_sock(), jobs=a.jobs,
+        ))
     if a.cmd == "similar":
         from .query import Range
         from .similar import Options as SimilarOptions, run as run_similar
