@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import __version__
 from .db import Writer
+from .live import Publisher, Tee
 from .hypr import Hypr, HyprlandNotRunning
 
 log = logging.getLogger(__name__)
@@ -121,7 +122,7 @@ class FocusTracker(threading.Thread):
             self._refresh()
 
 
-def run(db_path: Path, hz: int, use_evdev: bool = True) -> int:
+def run(db_path: Path, hz: int, use_evdev: bool = True, live_sock: Path | None = None) -> int:
     stop = threading.Event()
 
     def on_signal(signum, _frame):
@@ -136,6 +137,8 @@ def run(db_path: Path, hz: int, use_evdev: bool = True) -> int:
         return 0
 
     writer = Writer(db_path)
+    # Every event also goes to the live socket, fire and forget; the fountain listens there.
+    sink = writer if live_sock is None else Tee(writer, Publisher(live_sock))
     try:
         monitors = json.dumps(hypr.monitors(), separators=(",", ":"))
         hv = hypr.version()
@@ -150,16 +153,16 @@ def run(db_path: Path, hz: int, use_evdev: bool = True) -> int:
         poll_hz=hz,
         logger_version=__version__,
     )
-    log.info("session %d started, db=%s, %d Hz, evdev=%s", sid, db_path, hz, use_evdev)
+    log.info("session %d started, db=%s, %d Hz, evdev=%s, live=%s", sid, db_path, hz, use_evdev, live_sock)
     writer.start()
 
-    threads = [Poller(hypr, hz, writer, stop), FocusTracker(hypr, writer, stop)]
+    threads = [Poller(hypr, hz, sink, stop), FocusTracker(hypr, sink, stop)]
     if use_evdev:
         from .inputdev import InputManager
 
         threads.append(InputManager(
-            on_button=lambda row: writer.put("buttons", row),
-            on_scroll=lambda row: writer.put("scroll", row),
+            on_button=lambda row: sink.put("buttons", row),
+            on_scroll=lambda row: sink.put("scroll", row),
             stop=stop,
         ))
     for t in threads:
