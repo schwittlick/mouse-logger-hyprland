@@ -185,6 +185,76 @@ Distances are not comparable across metrics. The point-based DTW, Fréchet and
 Hausdorff metrics are the slow ones, about a second per 5,000 strokes; bound
 the range with `--since` on a big database.
 
+## Data fountain
+
+A local service that holds every recorded path in memory and answers filtered
+queries in milliseconds, for compositions and other programs. It serves two
+sources under one path model: the recorder's click-to-click strokes, and the
+legacy recordings of the `cursor` project (`~/dev/cursor/data/cursor-recordings`).
+Needs the `fountain` extra (`uv sync --extra fountain`).
+
+```sh
+uv run mouse-logger fountain build --legacy-dir ~/dev/cursor/data/cursor-recordings   # optional: fill the cache now (~20 s)
+uv run mouse-logger fountain serve --legacy-dir ~/dev/cursor/data/cursor-recordings   # http://127.0.0.1:7777, docs at /docs
+uv run mouse-logger install-service --fountain --legacy-dir ~/dev/cursor/data/cursor-recordings   # as a user service
+curl -s 'localhost:7777/paths/count?min_points=50&max_points=100&entropy_x_min=3.5&entropy_y_min=3.5'
+curl -s 'localhost:7777/paths?app=dota2&sort=distance&order=desc&limit=20&format=json' | jq .n
+```
+
+What it does on start: every input (one legacy JSON file, one day file per
+machine) becomes one Feather chunk under `~/.local/share/mouse_logger/fountain/v1`,
+rebuilt only when the input's size or mtime changes; then every chunk is
+memory-mapped and a per-path index of metrics is built (about 0.4 s for 820k
+paths). Today's strokes come straight from the live database and are refreshed
+every second; the stroke being drawn right now is served only with
+`include_open=1`. Inputs are rescanned every minute, or on `POST /refresh`.
+Nothing under `~/mouse-data` or in `mouse.db` is ever written.
+
+Paths are normalised to the primary monitor (0..1 is the screen that contains
+logical (0, 0); other monitors spill outside), which is what the legacy
+recorder did too. Per path the fountain keeps `screen_w/h` in logical px (0
+when unknown), `t0_ns`, the focused `app`, `source`, `machine`, `recording`,
+and metrics computed the way `cursor.path.Path` does so existing composition
+thresholds keep their meaning: `n_points` (after dropping consecutive duplicate
+points), `distance`, `duration_s`, the bounding box, `aspect` (h/w, ±inf for
+lines), `entropy_x`, `entropy_y`, `entropy_dc` (direction-change entropy),
+`variation_x`, `variation_y`.
+
+`GET /paths` parameters: `min_points`, `max_points`, `entropy_x_min/max`,
+`entropy_y_min/max`, `entropy_dc_min/max`, `distance_min/max`, `aspect_min/max`,
+`variation_x/y_min/max`, `duration_min/max`, `bbox=x0,y0,x1,y1`
+(`bbox_mode=intersects` instead of fully inside), `since`/`until` (same forms
+as viz, or epoch seconds), `source=legacy|mouse_logger`, `machine`, `app`,
+`recording` (globs allowed, repeatable), `has_color`, `ids`, `include_open`,
+`sort=<metric>|t0|id|entropy_cross|random` with `order` and `seed`, `limit`
+(default 200, 0 for all) and `offset`, `resample=N`, `fields=xy|xyt|xytc`,
+`meta=0|1`, `format=msgpack|json`. The response is columnar: `offsets`, `x`,
+`y`, `t` (ms since the path's `t0_ns`), optional `rgb`, per-path arrays and a
+`metrics` map, as little-endian byte strings in msgpack or lists in JSON; path
+k is points `[offsets[k], offsets[k+1])`. 10k paths are about 9 MB and 30 ms
+as msgpack, 30 MB and 110 ms as JSON. Also `GET /paths/count`,
+`GET /paths/{id}`, `GET /stats`, `GET /sources`, `GET /health`.
+
+Live: the recorder publishes every event to a unix datagram socket
+(`$XDG_RUNTIME_DIR/mouse_logger/live.sock`, off with `run --no-live`); the
+fountain listens there and fans out over `WS /live?hz=60&events=motion,button,scroll,focus&format=msgpack|json`,
+and `GET /live/position` returns the newest cursor sample. The socket is fire
+and forget: without a fountain the recorder just drops the datagrams.
+
+The cursor project talks to it through `cursor/load/fountain.py`:
+
+```python
+from cursor.load.fountain import Fountain
+pc = Fountain().paths(min_points=50, max_points=100, entropy_min=(3.5, 3.5), limit=200)   # a Collection
+n = Fountain().count(recording="1712393388.189338_saturday_sad", entropy_dc=(5, 10))
+for ev in Fountain().live(hz=30):
+    print(ev["x"], ev["y"])
+```
+
+Keyword names mirror the filter classes (`entropy_min=(3.5, 3.5)` is
+`EntropyMinFilter(3.5, 3.5)`), each `Path` carries the server's metadata and
+metrics in `properties["fountain"]`, and timestamps are float seconds.
+
 ## Layout
 
 - `src/mouse_logger/hypr.py`: Hyprland IPC client.
@@ -197,4 +267,7 @@ the range with `--since` on a big database.
 - `src/mouse_logger/viz.py`: the three renderers.
 - `src/mouse_logger/strokes.py`: click-to-click segmentation, resampling, the similarity metrics.
 - `src/mouse_logger/similar.py`: the Qt window for drawing a stroke and browsing matches.
+- `src/mouse_logger/live.py`: the recorder's fire-and-forget event publisher and the socket listener.
+- `src/mouse_logger/fountain/`: the data fountain: `metrics` (cursor-compatible path metrics), `cache` (Feather chunks), `ingest_legacy` and `ingest_days` (inputs and the live tail), `store` (the index and queries), `wire` (msgpack/JSON), `livehub` (WebSocket fan-out), `api` and `serve`.
+- `tests/`: `uv run pytest`.
 - `src/mouse_logger/cli.py`: the `mouse-logger` entry point.
