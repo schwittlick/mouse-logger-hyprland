@@ -146,6 +146,45 @@ local time (default: today until now). Also `--session N`, `--dark`, `--out`
 (extension picks png, svg or pdf), `--width`, `--dpi`. The screen frame comes
 from the monitor layout stored with the session.
 
+## Find similar strokes
+
+Needs the `similar` extra (`uv sync --extra similar`, pulls in PySide6).
+
+```sh
+uv run mouse-logger similar                       # all recorded strokes
+uv run mouse-logger similar --since 7d -n 20      # last week, 20 tiles per grid
+```
+
+Opens a Qt window. Draw a stroke with the mouse on the canvas, which has the
+shape of your monitor layout. The right side fills with the N recorded strokes
+that are most like it and the N that are least like it, nearest first, with
+the distance, time, duration, length and focused app under each. Every tile
+overlays the recorded stroke (solid, dot at the start) on your query (faint),
+both exactly as the metric saw them, so you can see what it matched on. Click
+a tile to make that stroke the query.
+
+Strokes are click-to-click, as in `viz path`. The toolbar changes what counts
+as similar, and every change re-runs the search:
+
+- **Metric**: `Shape (Procrustes)` is point-wise distance after normalisation,
+  fast and strict. `Points, DTW` lets the two strokes run at different speeds
+  along the way, `Points, Fréchet` penalises the single worst deviation,
+  `Points, Hausdorff` ignores drawing order. `Turning angles` compares the
+  direction change at each point and so captures wiggliness independent of
+  rotation; `Headings` compares absolute segment directions. The DTW variants
+  of both align the angle sequences elastically. Hover an entry for a one-line
+  description.
+- **Ignore position / size**: centre and scale every stroke before comparing
+  (both on by default). Off, where on the screen and how big count.
+- **Ignore rotation**: turn each candidate to fit the query best, least
+  squares. **Ignore direction**: also try each candidate backwards.
+- **Points**: resample count. **Min length**: drop short candidates (default 20 px), which
+  otherwise dominate the "farthest" grid.
+
+Distances are not comparable across metrics. The point-based DTW, Fréchet and
+Hausdorff metrics are the slow ones, about a second per 5,000 strokes; bound
+the range with `--since` on a big database.
+
 ## Layout
 
 - `src/mouse_logger/hypr.py`: Hyprland IPC client.
@@ -156,4 +195,6 @@ from the monitor layout stored with the session.
 - `src/mouse_logger/dayfiles.py`: per-day export files and the archive import.
 - `src/mouse_logger/query.py`: time-range parsing, loading into numpy.
 - `src/mouse_logger/viz.py`: the three renderers.
+- `src/mouse_logger/strokes.py`: click-to-click segmentation, resampling, the similarity metrics.
+- `src/mouse_logger/similar.py`: the Qt window for drawing a stroke and browsing matches.
 - `src/mouse_logger/cli.py`: the `mouse-logger` entry point.

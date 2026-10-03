@@ -17,6 +17,10 @@ mouse-logger = "mouse_logger.cli:main"
 viz = [
     "matplotlib>=3.9",
 ]
+similar = [
+    "numpy>=2.0",
+    "pyside6>=6.9",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]

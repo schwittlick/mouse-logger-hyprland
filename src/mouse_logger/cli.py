@@ -74,6 +74,20 @@ def main(argv: list[str] | None = None) -> int:
     va = vs.add_parser("activity", parents=[common], help="distance and active minutes per hour, clicks per app")
     va.add_argument("--top", type=int, default=10, help="apps in the clicks chart (default 10)")
 
+    sm = sub.add_parser("similar", help="draw a stroke, see the most and least similar recorded strokes "
+                                        "(needs: uv sync --extra similar)")
+    sm.add_argument("--db", type=Path, default=None, help="sqlite file (default: the live database)")
+    sm.add_argument("--archive", action="store_true", help=f"read the merged archive {default_archive_path()} instead")
+    sm.add_argument("--since", default="all", help="start, same forms as viz (default all)")
+    sm.add_argument("--until", default=None, help="end (default now)")
+    sm.add_argument("--session", type=int, default=None, help="only this session id")
+    sm.add_argument("--machine", default=None, metavar="HOSTNAME", help="only sessions recorded on this machine")
+    sm.add_argument("--double-click", type=float, default=0.3, metavar="SECONDS",
+                    help="presses closer together than this count as one stroke boundary (default 0.3)")
+    sm.add_argument("--min-points", type=int, default=4, help="skip strokes with fewer samples (default 4)")
+    sm.add_argument("--points", type=int, default=64, help="resample every stroke to this many points (default 64)")
+    sm.add_argument("-n", "--count", type=int, default=12, help="strokes shown in each grid (default 12)")
+
     a = p.parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if a.verbose else logging.INFO,
@@ -139,6 +153,18 @@ def main(argv: list[str] | None = None) -> int:
             cell=getattr(a, "cell", 8.0), top=getattr(a, "top", 10),
         )
         return run_viz(a.view, o, a.watch)
+    if a.cmd == "similar":
+        from .query import Range
+        from .similar import Options as SimilarOptions, run as run_similar
+
+        try:
+            rng = Range.from_args(a.since, a.until, a.session, a.machine)
+        except ValueError as e:
+            p.error(str(e))
+        return run_similar(SimilarOptions(
+            db=a.db or (default_archive_path() if a.archive else default_db_path()), rng=rng,
+            double_click=a.double_click, min_points=a.min_points, points=a.points, count=a.count,
+        ))
     return 2
 
 
