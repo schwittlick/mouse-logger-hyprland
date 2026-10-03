@@ -8,6 +8,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "evdev>=2.0.0",
+    "msgpack>=1.1",
 ]
 
 [project.scripts]
@@ -21,7 +22,25 @@ similar = [
     "numpy>=2.0",
     "pyside6>=6.9",
 ]
+fountain = [
+    "fastapi>=0.120",
+    "msgpack>=1.1",
+    "numpy>=2.0",
+    "orjson>=3.10",
+    "pyarrow>=21",
+    "uvicorn[standard]>=0.38",
+]
 
 [build-system]
 requires = ["uv_build>=0.12.13,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28",
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
