@@ -1,0 +1,1 @@
+- visualize separately from used app. make a drawing for each program/game that i have been using
