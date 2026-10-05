@@ -199,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         from .live import default_live_sock
         from .fountain.serve import Options as FountainOptions, serve as run_fountain
 
-        db = None if str(a.db).lower() == "none" else (a.db or default_db_path())
+        db = None if a.db is not None and str(a.db).lower() == "none" else (a.db or default_db_path())
         return run_fountain(FountainOptions(
             host=a.host, port=a.port, legacy_dir=legacy, data_dir=data_dir, db=db, cache_dir=cache_dir,
             live=not a.no_live, live_sock=a.live_sock or default_live_sock(), jobs=a.jobs,
