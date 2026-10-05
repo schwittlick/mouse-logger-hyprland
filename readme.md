@@ -54,7 +54,9 @@ stored per session, so recordings can be told apart later.
 ## Other machines
 
 The live database stays local; recordings travel as one file per machine and
-day. Completed days never change, so any sync tool handles them well.
+day. Completed days never change, so any sync tool handles them well. Each
+file also carries the focus state in force when its day began, so it can be
+read on its own.
 
 ```sh
 uv run mouse-logger export            # completed days -> ~/mouse-data/<hostname>/<YYYY-MM-DD>.sqlite

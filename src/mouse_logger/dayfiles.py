@@ -2,6 +2,8 @@
 
 export: live db -> <dir>/<machine>/<YYYY-MM-DD>.sqlite for every completed
         local day. Files never change once written, which suits any sync tool.
+        Each file also carries the focus state in force when its day began, as
+        a focus row stamped start_ns, so it can be read on its own.
         --today additionally writes <day>.partial.sqlite, replaced each run and
         superseded by the complete file once the day is over.
 import: every file of every machine under <dir> -> one archive db. Session
@@ -117,6 +119,14 @@ def export_day(db: Path, path: Path, machine: str, d: date, complete: bool) -> i
         conn.execute("ATTACH DATABASE ? AS src", (f"file:{db}?mode=ro",))
         n = 0
         with conn:
+            # the focus state in force when the day began, stamped start_ns so it lies inside the
+            # day's range: query.load_focus() then labels the first strokes of the day without the
+            # previous file, and a re-import still replaces it with the day. Inserted first so a
+            # real focus change at exactly start_ns sorts after it.
+            conn.execute(
+                "INSERT INTO focus(session_id,t_ns,mono_ns,address,app_id,title) "
+                "SELECT session_id,?,mono_ns,address,app_id,title FROM src.focus "
+                "WHERE t_ns < ? ORDER BY t_ns DESC LIMIT 1", (start, start))
             for table, cols in EVENT_COLUMNS.items():
                 cur = conn.execute(
                     f"INSERT INTO {table}(session_id,{cols}) SELECT session_id,{cols} FROM src.{table} "

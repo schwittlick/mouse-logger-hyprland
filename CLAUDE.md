@@ -75,7 +75,9 @@ recorder-to-fountain datagram socket.
 ## Invariants
 
 - Only the recorder writes `mouse.db`; only `export` writes `~/mouse-data`, and
-  day files are immutable. The fountain cache (`~/.local/share/mouse_logger/fountain/v1`)
+  day files are immutable (re-exported once with `export --force` on 2026-10-05,
+  when `export` started writing the focus state in force at each day's start;
+  without it the fountain labelled strokes before the day's first focus change `(none)`). The fountain cache (`~/.local/share/mouse_logger/fountain/v1`)
   is derived and disposable; changing `PARAMS` in `fountain/cache.py` rebuilds every chunk.
 - `fountain/metrics.py` replicates `cursor.path.Path` formulas exactly, computed
   on the stored float32 coordinates, so client-side recomputation matches the server.
