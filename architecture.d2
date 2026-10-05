@@ -1,0 +1,146 @@
+# Architecture of mouse_logger and its consumer, the cursor project.
+# Render: d2 architecture.d2 architecture.svg   (https://d2lang.com)
+# Solid edges are files and HTTP; dashed edges are best-effort live streams.
+
+direction: down
+
+title: "mouse_logger and the cursor project: data flow" {
+  shape: text
+  near: top-center
+  style.font-size: 28
+}
+
+# ---------------------------------------------------------------- sources
+hyprland: "Hyprland\nIPC socket (cursor position, polled 250 Hz)\nevent socket (focused window)" {
+  shape: hexagon
+}
+evdev: "/dev/input\nevdev: mouse buttons, scroll wheel" {
+  shape: hexagon
+}
+
+# ---------------------------------------------------------------- recorder
+recorder: "mouse-logger.service  (recorder.py)" {
+  direction: right
+  poller: "Poller thread\nhypr.py"
+  focus: "FocusTracker thread\nhypr.py"
+  input: "evdev readers\ninputdev.py"
+  tee: "Tee\nlive.py"
+  writer: "Writer thread\ndb.py, commits ~1/s"
+  publisher: "Publisher\nlive.py, non-blocking sendto"
+
+  poller -> tee: motion
+  focus -> tee: focus
+  input -> tee: button, scroll
+  tee -> writer
+  tee -> publisher: "never raises" {style.stroke-dash: 3}
+}
+
+hyprland -> recorder.poller
+hyprland -> recorder.focus
+evdev -> recorder.input
+
+mousedb: "mouse.db\n~/.local/share/mouse_logger\nSQLite WAL: sessions, motion, buttons, scroll, focus" {
+  shape: cylinder
+}
+livesock: "live.sock\n\$XDG_RUNTIME_DIR/mouse_logger\nunix datagram, msgpack (table, *row)" {
+  shape: queue
+}
+
+recorder.writer -> mousedb
+recorder.publisher -> livesock: "fire and forget" {style.stroke-dash: 3}
+
+# ---------------------------------------------------------------- day files and legacy
+export: "mouse-logger-export.timer\ndaily 00:06: export (dayfiles.py)"
+daydir: "~/mouse-data/<host>/<YYYY-MM-DD>.sqlite\nimmutable day files, one per machine and day\nsynced between machines with Syncthing or rsync" {
+  shape: page
+  style.multiple: true
+}
+legacy: "~/dev/cursor/data/cursor-recordings/*.json\n186 legacy recordings, 2019 to 2025\nimmutable source of truth" {
+  shape: page
+  style.multiple: true
+}
+
+mousedb -> export: "completed days"
+export -> daydir
+
+# ---------------------------------------------------------------- fountain
+fountain: "mouse-logger-fountain.service  (HTTP 127.0.0.1:7777)" {
+  direction: right
+  builder: "builder thread  serve.py\nbuild on start, rescan inputs every 60 s, tail every 1 s"
+  ingest_legacy: "ingest_legacy.py"
+  ingest_days: "ingest_days.py\nclick-to-click strokes (strokes.py, query.py)\nnormalised to the primary monitor"
+  metrics: "metrics.py\nn_points, distance, duration, bbox, aspect,\nentropy_x/y/dc, variation_x/y\nsame formulas as cursor.path.Path"
+  cache: "cache.py\nFeather chunk per input\n~/.local/share/mouse_logger/fountain/v1\nrebuilt when size or mtime changes; manifest.json keeps ids stable" {
+    shape: cylinder
+  }
+  index: "store.py  Index\nmemory-mapped chunks + per-path metric index\nfilters, sort, bbox, globs on app/machine/recording"
+  tail: "LiveTail  ingest_days.py\ntoday's strokes from mouse.db: closed chunk + open chunk\n(currently off: `fountain serve` without --db maps the default to None)" {
+    style.stroke-dash: 5
+  }
+  hub: "Hub  livehub.py\nreads live.sock on the event loop,\nnewest position, per-client hz thinning"
+  wire: "wire.py\ncolumnar msgpack or JSON\npath k = points [offsets[k], offsets[k+1])"
+  api: "api.py  FastAPI on uvicorn\nGET /paths, /paths/count, /paths/{id}\nGET /stats, /sources, /health, /docs\nPOST /refresh\nGET /live/position, WS /live?hz=N"
+
+  builder -> cache: "build stale chunks"
+  builder -> tail: "refresh" {style.stroke-dash: 3}
+  ingest_legacy -> metrics
+  ingest_days -> metrics
+  metrics -> cache: "write chunk"
+  cache -> index: "mmap"
+  tail -> index: "layered on the base index" {style.stroke-dash: 3}
+  index -> wire
+  wire -> api
+  hub -> api
+}
+
+legacy -> fountain.ingest_legacy: "one chunk per file"
+daydir -> fountain.ingest_days: "one chunk per day file"
+mousedb -> fountain.tail: "rows after the newest complete day" {style.stroke-dash: 3}
+livesock -> fountain.hub: "every event" {style.stroke-dash: 3}
+
+# ---------------------------------------------------------------- consumers
+cursor: "~/dev/cursor/cursor  (the art project)" {
+  direction: right
+  client: "cursor/load/fountain.py  Fountain\npaths(), frame(), count(), path(id), recordings(), live()\nhttpx + msgpack; Frame -> Collection of Path\neach Path keeps properties[\"fountain\"]"
+  compositions: "compositions/cNNN/cNNN.py\nc105: QUERY per focused app (--app dota2 | cs2),\nbuild() arranges the paths"
+  explorer: "cursor/tools/explorer.py\nPyQt5: filters with histograms, overlay / tiles,\ncopies QUERY = dict(...) for a composition"
+  export: "ExportWrapper\nHPGL + JPG preview\n<data_dir>/experiments/<name>/"
+
+  client -> compositions
+  client -> explorer
+  compositions -> export
+}
+curl: "curl, browser\n/docs (OpenAPI)" {
+  shape: person
+}
+
+cursor.client -> fountain.api: "GET /paths ... as msgpack"
+fountain.api -> cursor.client: "WS /live (websockets)" {style.stroke-dash: 3}
+curl -> fountain.api
+
+# ---------------------------------------------------------------- tools that read SQLite directly
+tools: "mouse_logger tools on SQLite directly  (not through the fountain)" {
+  direction: right
+  viz: "viz path | heatmap | activity  viz.py\n--app, --since, --split click|rest\n-> png, svg, pdf"
+  similar: "similar  similar.py\nQt: draw a stroke, find nearest and farthest"
+  importer: "import  dayfiles.py\nmerges all machines' day files"
+  archive: "archive.db\n~/.local/share/mouse_logger" {
+    shape: cylinder
+  }
+
+  importer -> archive
+  archive -> viz: "--archive"
+  archive -> similar: "--archive"
+}
+
+mousedb -> tools.viz
+mousedb -> tools.similar
+daydir -> tools.importer
+
+# ---------------------------------------------------------------- legend
+legend: "Legend" {
+  near: bottom-left
+  solid: "solid: files, HTTP" {shape: text}
+  dashed: "dashed: live, best effort" {shape: text}
+  off: "dashed border: disabled right now" {style.stroke-dash: 5}
+}
