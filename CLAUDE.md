@@ -56,6 +56,21 @@ recorder-to-fountain datagram socket.
   cursor's own formulas, so the Collection passes the same filters again.
 - The old loaders (`cursor/load/loader.py`, `arrow_loader.py`, `algorithm/h5.py`)
   still exist; new compositions should use `Fountain`.
+- `Fountain().frame(**filters)` returns a `Frame` (numpy columns, `points(k)`,
+  `info(k)`, `collection()`), which `paths()` is built on; a `None` inside a
+  pair leaves that side open (`entropy_min=(3.5, None)`).
+
+### The explorer, `cursor/tools/explorer.py` (2026-10-03)
+
+- PyQt5 window on the fountain: `PYTHONPATH=. .venv/bin/python -m cursor.tools.explorer`
+  (`--limit`, `--fountain`). Left: every filter with a histogram per metric
+  (grey = population from a 5000-path random sample, blue = the query; drag to
+  set a range, double-click to clear). Centre: overlay in the screen frame or a
+  grid of tiles, colour by time/app/recording/metric, hover, click, right-drag a
+  bbox, wheel zoom. Right: the selected path. The panel shows the query as
+  `QUERY = dict(...)` for a composition; "Copy Python", "Copy ids", "Save pickle".
+- Tests: `cursor/tests/tools/test_explorer.py` runs offscreen with a stub
+  fountain (`QT_QPA_PLATFORM=offscreen`).
 
 ### Compositions
 
