@@ -9,7 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
-# rendered images
-mouse_*.png
-mouse_*.svg
-mouse_*.pdf
+# rendered images (viz --out), except the architecture diagram
+*.png
+*.svg
+*.pdf
+!architecture.svg
