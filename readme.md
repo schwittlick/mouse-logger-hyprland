@@ -128,6 +128,8 @@ uv run mouse-logger viz path --color time         # strokes shaded light to dark
 uv run mouse-logger viz path --art --out day.svg  # no chrome, just the drawing (plotter-friendly)
 uv run mouse-logger viz heatmap --since 7d        # where the cursor dwells
 uv run mouse-logger viz activity --since yesterday --until today
+uv run mouse-logger viz path --since all --app dota2 --out dota.png   # only strokes made while Dota 2 was focused
+uv run mouse-logger viz path --since all --app cs2 --out cs2.png      # the same for Counter-Strike 2
 uv run mouse-logger viz path --watch 5            # re-render every 5 s; open the png in a viewer that reloads
 ```
 
@@ -142,9 +144,13 @@ uv run mouse-logger viz path --watch 5            # re-render every 5 s; open th
 
 Shared options: `--since` and `--until` take `all`, `today`, `yesterday`,
 ages like `30m`, `2h`, `7d`, `1w`, or `2026-09-30` / `2026-09-30 14:00` in
-local time (default: today until now). Also `--session N`, `--dark`, `--out`
-(extension picks png, svg or pdf), `--width`, `--dpi`. The screen frame comes
-from the monitor layout stored with the session.
+local time (default: today until now). `--app ID` keeps only what happened
+while a window with that app-id was focused (a glob, repeatable: `--app dota2
+--app cs2`); the ids are the ones `viz activity` lists. Strokes are cut where
+the focus left the app, so nothing is drawn across the time spent elsewhere.
+Also `--session N`, `--dark`, `--out` (extension picks png, svg or pdf),
+`--width`, `--dpi`. The screen frame comes from the monitor layout stored with
+the session.
 
 ## Find similar strokes
 

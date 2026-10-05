@@ -70,7 +70,7 @@ def segment(m: query.Motion, press_t: np.ndarray, double_click: float = 0.3,
     if len(m) < 2:
         empty = np.zeros(0, dtype=np.int64)
         return empty, empty, np.zeros(0)
-    hard = m.session_breaks()
+    hard = m.hard_breaks()
     soft = m.click_breaks(query.merge_presses(press_t, int(double_click * NS)))
     brk = np.unique(np.concatenate([soft, hard])).astype(np.int64)
     share = ~np.isin(brk, hard)  # after a click the next stroke starts where the click happened

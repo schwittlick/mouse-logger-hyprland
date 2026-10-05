@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import fnmatch
 import itertools
 import json
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -71,11 +72,12 @@ class Range:
     until_ns: int | None = None
     session: int | None = None
     machine: str | None = None  # sessions.hostname, useful on a merged archive
+    app: tuple[str, ...] = ()   # focus app-id globs; not SQL, applied by the loaders (see app_mask)
 
     @classmethod
     def from_args(cls, since: str | None, until: str | None, session: int | None,
-                  machine: str | None = None) -> "Range":
-        return cls(parse_when(since), parse_when(until, end=True), session, machine)
+                  machine: str | None = None, app: list[str] | None = None) -> "Range":
+        return cls(parse_when(since), parse_when(until, end=True), session, machine, tuple(app or ()))
 
     def sql(self) -> tuple[str, list]:
         conds, args = [], []
@@ -111,6 +113,8 @@ class Motion:
     x: np.ndarray    # float64 logical px
     y: np.ndarray
     sid: np.ndarray  # int64 session id
+    cut: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int64))
+    # cut: a filter (Range.app) dropped samples before sample i, so i-1 and i were not neighbours
 
     def __len__(self) -> int:
         return len(self.t)
@@ -122,6 +126,10 @@ class Motion:
         if len(self.t) < 2:
             return np.array([], dtype=np.int64)
         return np.flatnonzero(np.diff(self.sid) != 0) + 1
+
+    def hard_breaks(self) -> np.ndarray:
+        """Session breaks plus filter cuts: the motion before sample i is unknown or belongs elsewhere."""
+        return np.unique(np.concatenate([self.session_breaks(), self.cut])).astype(np.int64)
 
     def rest_breaks(self, gap_ns: int) -> np.ndarray:
         """The cursor rested longer than gap_ns before sample i."""
@@ -159,6 +167,7 @@ class Motion:
             return np.zeros(0)
         d = np.hypot(np.diff(self.x), np.diff(self.y))
         d[(np.diff(self.t) > gap_ns) | (np.diff(self.sid) != 0)] = 0.0
+        d[self.cut - 1] = 0.0
         return d
 
 
@@ -168,7 +177,13 @@ def load_motion(conn: sqlite3.Connection, rng: Range, stride: int = 1) -> Motion
     a = _int_matrix(cur, 4)
     if stride > 1:
         a = a[::stride]
-    return Motion(a[:, 0], a[:, 1].astype(float), a[:, 2].astype(float), a[:, 3])
+    cut = np.zeros(0, dtype=np.int64)
+    if rng.app:
+        ft, fa = load_focus(conn, rng)
+        keep = np.flatnonzero(app_mask(ft, fa, a[:, 0], rng.app))
+        cut = np.flatnonzero(np.diff(keep) > 1) + 1  # the kept samples on either side were not neighbours
+        a = a[keep]
+    return Motion(a[:, 0], a[:, 1].astype(float), a[:, 2].astype(float), a[:, 3], cut)
 
 
 def merge_presses(t: np.ndarray, within_ns: int) -> np.ndarray:
@@ -185,6 +200,9 @@ def load_presses(conn: sqlite3.Connection, rng: Range) -> tuple[np.ndarray, np.n
     where, args = rng.sql()
     where = (where + " AND pressed = 1") if where else " WHERE pressed = 1"
     a = _int_matrix(conn.execute(f"SELECT t_ns, code FROM buttons{where} ORDER BY t_ns", args), 2)
+    if rng.app:
+        ft, fa = load_focus(conn, rng)
+        a = a[app_mask(ft, fa, a[:, 0], rng.app)]
     return a[:, 0], a[:, 1]
 
 
@@ -208,6 +226,18 @@ def app_at(focus_t: np.ndarray, focus_app: list[str | None], t: np.ndarray) -> l
         return ["(none)"] * len(t)
     idx = np.searchsorted(focus_t, t, side="right") - 1
     return [(focus_app[i] or "(none)") if i >= 0 else "(none)" for i in idx]
+
+
+def app_mask(focus_t: np.ndarray, focus_app: list[str | None], t: np.ndarray,
+             patterns: tuple[str, ...] | list[str]) -> np.ndarray:
+    """True for each time in t when the focused app (as app_at names it) matches one of the globs."""
+    names = [a or "(none)" for a in focus_app]
+    ok = np.array([any(fnmatch.fnmatchcase(n, pat) for pat in patterns) for n in names], dtype=bool)
+    none_ok = any(fnmatch.fnmatchcase("(none)", pat) for pat in patterns)
+    if len(focus_t) == 0:
+        return np.full(len(t), none_ok, dtype=bool)
+    idx = np.searchsorted(focus_t, t, side="right") - 1
+    return np.where(idx >= 0, ok[np.maximum(idx, 0)], none_ok)
 
 
 def rects_from_json(text: str | None) -> list[tuple[float, float, float, float]]:

@@ -65,9 +65,12 @@ recorder-to-fountain datagram socket.
   `ExportWrapper(collection, PLOTTER, PADDING_MM, "cNNN", collection.hash(), export_jpg_preview=True)`
   with `.fit()` and `.ex()`.
 - `composition105/`: scaffold (2026-10-03) with a fountain `QUERY` and a
-  placeholder `build()`. Still to do: Marcel will provide a text description of
-  the geometric idea; fill README.md "Geometric idea" and implement `build()`,
-  then set the plotter, pens and query to match.
+  placeholder `build()`. Decided 2026-10-04: source paths are per focused app,
+  `--app dota2` or `--app cs2` (fountain `app=` glob), one drawing per game,
+  never mixed; outputs are suffixed `dota2_<hash>` / `cs2_<hash>`. The viz
+  counterpart is `mouse-logger viz path --app dota2`. Still to do: Marcel will
+  provide a text description of the geometric idea; fill README.md "Geometric
+  idea" and implement `build()`, then set the plotter, pens and query to match.
 
 ## Invariants
 

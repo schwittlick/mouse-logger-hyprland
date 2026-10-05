@@ -119,6 +119,15 @@ def _span(t0: int, t1: int) -> str:
     return f"{fmt_time(t0)} → {fmt_time(t1, with_date=not same_day)}"
 
 
+def _scope(o: Options) -> str:
+    """Title prefix naming the app filter, empty without one."""
+    return (", ".join(o.rng.app) + " · ") if o.rng.app else ""
+
+
+def _app_note(o: Options) -> str:
+    return (", app " + ", ".join(o.rng.app)) if o.rng.app else ""
+
+
 def _titles(ax, th, title: str, sub: str) -> None:
     ax.set_title(title, loc="left", pad=10)
     ax.set_title(sub, loc="right", pad=10, fontsize=8, fontweight="normal", color=th["muted"])
@@ -145,7 +154,7 @@ def _stroke_breaks(m, o: Options, press_t: np.ndarray) -> tuple[np.ndarray, np.n
         soft.append(m.rest_breaks(int(o.gap * NS)))
     if o.split in ("click", "both"):
         soft.append(m.click_breaks(query.merge_presses(press_t, int(o.double_click * NS))))
-    hard = m.session_breaks()
+    hard = m.hard_breaks()
     brk = np.unique(np.concatenate(soft + [hard])).astype(np.int64)
     return brk, ~np.isin(brk, hard)
 
@@ -234,14 +243,14 @@ def render_path(conn, o: Options) -> str:
         _screen_axes(ax, th, rects, x0, y0, x1, y1)
         sub = (f"{len(m):,} samples · {len(brk) + 1:,} strokes · {n_clicks:,} clicks · "
                f"{travelled / 1000:,.0f}k logical px travelled")
-        _titles(ax, th, f"Cursor path · {_span(int(m.t[0]), int(m.t[-1]))}", sub)
+        _titles(ax, th, f"Cursor path · {_scope(o)}{_span(int(m.t[0]), int(m.t[-1]))}", sub)
         if n_clicks:
             ax.legend(loc="upper left", bbox_to_anchor=(0, 0), ncol=4, handletextpad=0.4, columnspacing=1.5,
                       borderaxespad=0.2)
         _save(fig, o)
     plt.close(fig)
     return (f"{o.out}: path, {len(m):,} samples, {len(brk) + 1:,} strokes (split by {o.split}), "
-            f"{n_clicks:,} clicks, {_span(int(m.t[0]), int(m.t[-1]))}")
+            f"{n_clicks:,} clicks, {_span(int(m.t[0]), int(m.t[-1]))}{_app_note(o)}")
 
 
 # ------------------------------------------------------------------------ heatmap
@@ -278,11 +287,11 @@ def render_heatmap(conn, o: Options) -> str:
     cb.ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
     cb.ax.xaxis.set_minor_formatter(FuncFormatter(lambda v, _: ""))
     busiest = int(hist.max())
-    _titles(ax, th, f"Cursor heatmap · {_span(int(m.t[0]), int(m.t[-1]))}",
+    _titles(ax, th, f"Cursor heatmap · {_scope(o)}{_span(int(m.t[0]), int(m.t[-1]))}",
             f"{len(m):,} samples · {int((hist > 0).sum()):,} of {nx * ny:,} cells visited · busiest cell {busiest:,}")
     _save(fig, o)
     plt.close(fig)
-    return f"{o.out}: heatmap, {len(m):,} samples, {_span(int(m.t[0]), int(m.t[-1]))}"
+    return f"{o.out}: heatmap, {len(m):,} samples, {_span(int(m.t[0]), int(m.t[-1]))}{_app_note(o)}"
 
 
 # ----------------------------------------------------------------------- activity
@@ -319,7 +328,7 @@ def render_activity(conn, o: Options) -> str:
     h_rows = max(1.4, 0.32 * len(per_app) + 0.8)  # inches for the clicks panel
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(o.width, 6.0 + h_rows), layout="constrained",
                                         height_ratios=[3.0, 3.0, h_rows])
-    fig.suptitle(f"Mouse activity · {_span(int(m.t[0]), int(m.t[-1]))}", x=0.01, ha="left")
+    fig.suptitle(f"Mouse activity · {_scope(o)}{_span(int(m.t[0]), int(m.t[-1]))}", x=0.01, ha="left")
 
     for ax, values, title, unit in (
         (ax1, dist / 1000.0, "Distance travelled per hour", "thousand logical px"),
@@ -366,7 +375,7 @@ def render_activity(conn, o: Options) -> str:
     _save(fig, o)
     plt.close(fig)
     return (f"{o.out}: activity, {dist.sum() / 1000:,.0f}k px travelled, {int(active.sum())} active minutes, "
-            f"{len(ct):,} clicks, {_span(int(m.t[0]), int(m.t[-1]))}")
+            f"{len(ct):,} clicks, {_span(int(m.t[0]), int(m.t[-1]))}{_app_note(o)}")
 
 
 RENDERERS = {"path": render_path, "heatmap": render_heatmap, "activity": render_activity}

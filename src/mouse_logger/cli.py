@@ -52,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
     common.add_argument("--until", default=None, help="end, same forms (default now)")
     common.add_argument("--session", type=int, default=None, help="only this session id")
     common.add_argument("--machine", default=None, metavar="HOSTNAME", help="only sessions recorded on this machine")
+    common.add_argument("--app", action="append", default=None, metavar="APP_ID",
+                        help="only what happened while this app-id was focused (glob, repeatable; "
+                             "ids as listed by viz activity)")
     common.add_argument("--out", type=Path, default=None,
                         help="output image; the extension picks png, svg or pdf (default mouse_<view>.png)")
     common.add_argument("--dark", action="store_true", help="dark surface")
@@ -168,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         from .viz import Options, run as run_viz
 
         try:
-            rng = Range.from_args(a.since, a.until, a.session, a.machine)
+            rng = Range.from_args(a.since, a.until, a.session, a.machine, a.app)
         except ValueError as e:
             p.error(str(e))
         o = Options(
