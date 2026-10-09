@@ -13,6 +13,10 @@ a session needs beyond it.
   `mouse-logger-fountain.service` (HTTP on 127.0.0.1:7777). Use
   `systemctl --user status <unit>` and `journalctl --user -u <unit>`. A code
   change needs `systemctl --user restart <unit>`; the units run this checkout's venv.
+- Machines (2026-10-09): `lush` and `marstation`, both running all three units plus
+  `syncthing.service`, which shares `~/mouse-data` as folder `mouse-data` (readme
+  "Syncing with Syncthing"). They reach each other at their NetBird FQDNs
+  (`netbird status`). On marstation the legacy recordings are `~/dev/cursor/data/recordings`.
 - `uv run mouse-logger fountain build|serve --legacy-dir ~/dev/cursor/data/cursor-recordings`.
 
 ## Layout
@@ -89,8 +93,8 @@ recorder-to-fountain datagram socket.
 
 ## Invariants
 
-- Only the recorder writes `mouse.db`; only `export` writes `~/mouse-data`, and
-  day files are immutable (re-exported once with `export --force` on 2026-10-05,
+- Only the recorder writes `mouse.db`; only `export` writes `~/mouse-data/<own hostname>/`,
+  Syncthing fills the other machines' folders, and day files are immutable (re-exported once with `export --force` on 2026-10-05,
   when `export` started writing the focus state in force at each day's start;
   without it the fountain labelled strokes before the day's first focus change `(none)`). The fountain cache (`~/.local/share/mouse_logger/fountain/v1`)
   is derived and disposable; changing `PARAMS` in `fountain/cache.py` rebuilds every chunk.

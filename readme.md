@@ -49,7 +49,9 @@ uv run mouse-logger uninstall-service
 
 The unit points at the venv inside this folder. If you move the folder, run
 `install-service` again. Each machine keeps its own database; the hostname is
-stored per session, so recordings can be told apart later.
+stored per session, so recordings can be told apart later. To share the
+recordings with your other machines, continue with
+[Syncing with Syncthing](#syncing-with-syncthing).
 
 ## Other machines
 
@@ -67,12 +69,73 @@ uv run mouse-logger viz path --archive --since all --machine lush
 ```
 
 `install-service` also installs a timer that runs `export` once a day, so
-`~/mouse-data` fills up on its own. Sync that directory between machines with
-Syncthing, rsync or similar (`--dir` or `MOUSE_LOGGER_DATA` changes the
-location; pass `--data-dir` to `install-service` for the timer). Run `import`
-wherever you want to explore: it skips files it has already merged, replaces a
-partial day when the complete file arrives, and keeps every machine's sessions
-apart by hostname. Never sync the live database itself.
+`~/mouse-data` fills up on its own. Sync that directory between machines, as
+below with Syncthing, or with rsync or similar (`--dir` or `MOUSE_LOGGER_DATA`
+changes the location; pass `--data-dir` to `install-service` for the timer).
+Run `import` wherever you want to explore: it skips files it has already
+merged, replaces a partial day when the complete file arrives, and keeps every
+machine's sessions apart by hostname. Never sync the live database itself.
+
+### Syncing with Syncthing
+
+Every machine shares `~/mouse-data` with every other machine as one Syncthing
+folder, id `mouse-data`, Send & Receive. Each machine writes only its own
+`<hostname>/` subfolder, so no two machines ever touch the same file; their
+hostnames must differ. A running fountain serves a new day file within a minute
+of its arrival (it rescans every `~/mouse-data/*/`), `import` takes it on its
+next run. A machine's day reaches the others once its export timer has run,
+shortly after midnight.
+
+The machines connect at fixed addresses, `tcp://<host>:22000`, where `<host>`
+is a name or IP the other machines reach it at: on the LAN, or through a mesh
+VPN such as NetBird or Tailscale when they are apart. Syncthing passes files
+along any chain of connected machines, so linking a new machine with one
+existing machine is enough. Linking it with all of them keeps it from depending
+on that one being online.
+
+To add a machine (commands for Syncthing 2):
+
+1. Set it up as in [Set up on a new machine](#set-up-on-a-new-machine).
+   `install-service` brings the export timer.
+2. Install and start Syncthing as a user service, then note the device id:
+
+   ```sh
+   sudo pacman -S syncthing                    # Debian/Ubuntu: sudo apt install syncthing
+   systemctl --user enable --now syncthing
+   syncthing device-id                         # the other machines need this
+   ```
+
+3. On the new machine, ignore temporary files, add every existing machine and
+   share the folder with it. The ignore file is not synced, so each machine
+   has its own. Day files are written as `<day>.sqlite.tmp` and renamed when
+   complete, so half-written files never travel; the patterns are a safeguard.
+
+   ```sh
+   mkdir -p ~/mouse-data
+   printf '*.tmp\n*-journal\n*-wal\n*-shm\n' > ~/mouse-data/.stignore
+   syncthing cli config folders add --id mouse-data --label mouse-data --path ~/mouse-data --type sendreceive
+   # once per existing machine:
+   syncthing cli config devices add --device-id <ID> --name <hostname> --addresses tcp://<host>:22000
+   syncthing cli config folders mouse-data devices add --device-id <ID>
+   ```
+
+4. On each existing machine, add the new one and share the folder with it:
+
+   ```sh
+   syncthing cli config devices add --device-id <NEW_ID> --name <new hostname> --addresses tcp://<new host>:22000
+   syncthing cli config folders mouse-data devices add --device-id <NEW_ID>
+   ```
+
+5. Check on any machine. The other machines' folders fill within minutes:
+
+   ```sh
+   syncthing cli show connections | grep '"connected"'   # one "connected": true per linked machine
+   ls ~/mouse-data/*                                     # <hostname>/<YYYY-MM-DD>.sqlite for every machine
+   ```
+
+The very first machine has nobody to link with: it runs step 3 without the
+per-machine lines. The web UI at http://127.0.0.1:8384 shows the same devices
+and folder, and is the place to pause or remove a machine.
 
 ## What it records
 
